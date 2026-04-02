@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>現着確認</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+      background: #f5f5f5;
+      color: #333;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px;
+    }
+
+    .container { max-width: 400px; width: 100%; }
+
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    h1 { font-size: 20px; text-align: center; margin-bottom: 20px; color: #1a1a1a; }
+
+    .info-label { font-size: 12px; color: #888; margin-bottom: 4px; }
+    .info-value { font-size: 16px; font-weight: 600; margin-bottom: 16px; }
+
+    .checkin-btn {
+      width: 100%; padding: 16px; font-size: 18px; font-weight: 700;
+      color: #fff; background: #1E94EC; border: none; border-radius: 10px;
+      cursor: pointer; transition: background 0.2s;
+    }
+    .checkin-btn:active { background: #1565C0; }
+    .checkin-btn:disabled { background: #ccc; cursor: not-allowed; }
+
+    .status { text-align: center; margin-top: 12px; font-size: 14px; color: #666; }
+
+    .result { text-align: center; padding: 20px; }
+    .result-ok { color: #2e7d32; }
+    .result-ng { color: #c62828; }
+    .result-icon { font-size: 48px; margin-bottom: 12px; }
+    .result-message { font-size: 16px; line-height: 1.6; }
+    .result-distance { font-size: 28px; font-weight: 700; margin: 8px 0; }
+
+    .consent {
+      font-size: 12px; color: #999; text-align: center;
+      margin-top: 16px; line-height: 1.6;
+    }
+
+    .error { color: #c62828; text-align: center; padding: 16px; }
+
+    .spinner {
+      display: inline-block; width: 20px; height: 20px;
+      border: 3px solid #ddd; border-top-color: #1E94EC;
+      border-radius: 50%; animation: spin 0.8s linear infinite;
+      vertical-align: middle; margin-right: 8px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>📍 現着確認</h1>
+
+    <div class="card" id="infoCard">
+      <div class="info-label">イベント</div>
+      <div class="info-value" id="eventName">-</div>
+      <div class="info-label">撮影場所</div>
+      <div class="info-value" id="locationInfo">-</div>
+    </div>
+
+    <div class="card" id="checkinCard">
+      <button class="checkin-btn" id="checkinBtn" onclick="doCheckin()">
+        現着しました
+      </button>
+      <div class="status" id="status"></div>
+      <div class="consent">
+        ボタンを押すと、現在地の位置情報を取得します。<br>
+        撮影場所の到着確認のみに使用し、継続的な追跡は行いません。
+      </div>
+    </div>
+
+    <div class="card hidden" id="resultCard">
+      <div class="result" id="result"></div>
+    </div>
+
+    <div class="card hidden" id="errorCard">
+      <div class="error" id="errorMessage"></div>
+    </div>
+  </div>
+
+  <script>
+    // ===== 設定 =====
+    // ★ createCheckinForm() 実行後に表示されるエントリーIDをここに貼る
+    var FORM_ACTION_URL = 'https://docs.google.com/forms/d/e/ここにフォーム公開IDを貼る/formResponse';
+    var FORM_ENTRIES = {
+      eventId:   'entry.ここにIDを貼る',
+      camId:     'entry.ここにIDを貼る',
+      camName:   'entry.ここにIDを貼る',
+      groupName: 'entry.ここにIDを貼る',
+      eventName: 'entry.ここにIDを貼る',
+      lat:       'entry.ここにIDを貼る',
+      lng:       'entry.ここにIDを貼る',
+      distance:  'entry.ここにIDを貼る',
+      result:    'entry.ここにIDを貼る'
+    };
+    var DISTANCE_THRESHOLD = 500;
+
+    // ===== URLパラメータから撮影情報を取得 =====
+    var params = new URLSearchParams(window.location.search);
+    var info = {
+      eventId:   params.get('event') || '',
+      camId:     params.get('cam') || '',
+      camName:   params.get('camname') || '',
+      groupName: params.get('group') || '',
+      eventName: params.get('ename') || '',
+      address:   params.get('addr') || '',
+      lat:       parseFloat(params.get('lat')) || 0,
+      lng:       parseFloat(params.get('lng')) || 0
+    };
+
+    // ===== 初期表示 =====
+    window.onload = function() {
+      if (!info.eventId || !info.lat || !info.lng) {
+        showError('撮影情報が正しく読み込めませんでした。URLを確認してください。');
+        document.getElementById('checkinCard').classList.add('hidden');
+        return;
+      }
+      document.getElementById('eventName').textContent =
+        info.groupName + '（' + info.eventName + '）';
+      document.getElementById('locationInfo').textContent = info.address;
+    };
+
+    // ===== チェックイン =====
+    function doCheckin() {
+      var btn = document.getElementById('checkinBtn');
+      var status = document.getElementById('status');
+      btn.disabled = true;
+      status.innerHTML = '<span class="spinner"></span>位置情報を取得中...';
+
+      if (!navigator.geolocation) {
+        showError('お使いのブラウザは位置情報に対応していません。');
+        btn.disabled = false; status.textContent = '';
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        function(pos) {
+          status.innerHTML = '<span class="spinner"></span>確認中...';
+          processCheckin(pos.coords.latitude, pos.coords.longitude);
+        },
+        function(error) {
+          btn.disabled = false; status.textContent = '';
+          var msgs = {
+            1: '位置情報の取得が許可されませんでした。ブラウザの設定を確認してください。',
+            2: '位置情報を取得できませんでした。電波の良い場所で再度お試しください。',
+            3: '位置情報の取得がタイムアウトしました。再度お試しください。'
+          };
+          showError(msgs[error.code] || '位置情報の取得中にエラーが発生しました。');
+        },
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+      );
+    }
+
+    // ===== 距離計算 & 判定 & フォーム送信 =====
+    function processCheckin(myLat, myLng) {
+      var distance = calcDistance(myLat, myLng, info.lat, info.lng);
+      var isOk = distance <= DISTANCE_THRESHOLD;
+      var distRounded = Math.round(distance);
+
+      document.getElementById('checkinCard').classList.add('hidden');
+      showResult(isOk, distRounded);
+
+      // Googleフォームに送信（裏側で）
+      submitToForm(myLat, myLng, distRounded, isOk);
+    }
+
+    function calcDistance(lat1, lng1, lat2, lng2) {
+      var R = 6371000;
+      var toRad = function(d) { return d * Math.PI / 180; };
+      var dLat = toRad(lat2 - lat1);
+      var dLng = toRad(lng2 - lng1);
+      var a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+              Math.sin(dLng/2) * Math.sin(dLng/2);
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    // ===== Googleフォーム送信 =====
+    function submitToForm(myLat, myLng, distance, isOk) {
+      var formData = new URLSearchParams();
+      formData.append(FORM_ENTRIES.eventId,   info.eventId);
+      formData.append(FORM_ENTRIES.camId,     info.camId);
+      formData.append(FORM_ENTRIES.camName,   info.camName);
+      formData.append(FORM_ENTRIES.groupName, info.groupName);
+      formData.append(FORM_ENTRIES.eventName, info.eventName);
+      formData.append(FORM_ENTRIES.lat,       String(myLat));
+      formData.append(FORM_ENTRIES.lng,       String(myLng));
+      formData.append(FORM_ENTRIES.distance,  String(distance));
+      formData.append(FORM_ENTRIES.result,    isOk ? 'OK' : 'NG');
+
+      fetch(FORM_ACTION_URL, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: formData.toString()
+      }).catch(function() {
+        // 送信失敗しても画面表示には影響させない
+      });
+    }
+
+    // ===== 表示 =====
+    function showResult(isOk, distance) {
+      var card = document.getElementById('resultCard');
+      var result = document.getElementById('result');
+      card.classList.remove('hidden');
+
+      if (isOk) {
+        result.innerHTML =
+          '<div class="result-ok">' +
+            '<div class="result-icon">✅</div>' +
+            '<div class="result-distance">' + distance + 'm</div>' +
+            '<div class="result-message">' + info.groupName + '<br>現着確認できました！</div>' +
+          '</div>';
+      } else {
+        result.innerHTML =
+          '<div class="result-ng">' +
+            '<div class="result-icon">⚠️</div>' +
+            '<div class="result-distance">' + distance + 'm</div>' +
+            '<div class="result-message">撮影場所：' + info.groupName +
+            '<br><strong>場所が離れています。<br>住所をご確認ください。</strong></div>' +
+          '</div>';
+      }
+    }
+
+    function showError(msg) {
+      document.getElementById('errorCard').classList.remove('hidden');
+      document.getElementById('errorMessage').textContent = msg;
+    }
+  </script>
+</body>
+</html>
