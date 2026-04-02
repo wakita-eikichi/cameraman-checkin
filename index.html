@@ -101,19 +101,7 @@
 
   <script>
     // ===== 設定 =====
-    // ★ createCheckinForm() 実行後に表示されるエントリーIDをここに貼る
-    var FORM_ACTION_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSdSPWrm30SOp2WoMfugCTOQNoU4KAFW4ZzJerf3Yr6HpN4-rg/formResponse';
-    var FORM_ENTRIES = {
-      eventId:   'entry.1831450186',
-      camId:     'entry.311971207',
-      camName:   'entry.1003458030',
-      groupName: 'entry.469490805',
-      eventName: 'entry.1100398296',
-      lat:       'entry.322214683',
-      lng:       'entry.1420910671',
-      distance:  'entry.1947699573',
-      result:    'entry.212535658'
-    };
+    var N8N_WEBHOOK_URL = 'ここにn8nのWebhook URLを貼る';
     var DISTANCE_THRESHOLD = 500;
 
     // ===== URLパラメータから撮影情報を取得 =====
@@ -181,8 +169,8 @@
       document.getElementById('checkinCard').classList.add('hidden');
       showResult(isOk, distRounded);
 
-      // Googleフォームに送信（裏側で）
-      submitToForm(myLat, myLng, distRounded, isOk);
+      // n8nに送信（裏側で）
+      submitToN8n(myLat, myLng, distRounded, isOk);
     }
 
     function calcDistance(lat1, lng1, lat2, lng2) {
@@ -196,24 +184,30 @@
       return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     }
 
-    // ===== Googleフォーム送信 =====
-    function submitToForm(myLat, myLng, distance, isOk) {
-      var formData = new URLSearchParams();
-      formData.append(FORM_ENTRIES.eventId,   info.eventId);
-      formData.append(FORM_ENTRIES.camId,     info.camId);
-      formData.append(FORM_ENTRIES.camName,   info.camName);
-      formData.append(FORM_ENTRIES.groupName, info.groupName);
-      formData.append(FORM_ENTRIES.eventName, info.eventName);
-      formData.append(FORM_ENTRIES.lat,       String(myLat));
-      formData.append(FORM_ENTRIES.lng,       String(myLng));
-      formData.append(FORM_ENTRIES.distance,  String(distance));
-      formData.append(FORM_ENTRIES.result,    isOk ? 'OK' : 'NG');
+    // ===== n8n Webhook送信 =====
+    function submitToN8n(myLat, myLng, distance, isOk) {
+      if (N8N_WEBHOOK_URL === 'ここにn8nのWebhook URLを貼る') return;
 
-      fetch(FORM_ACTION_URL, {
+      var payload = {
+        eventId:   info.eventId,
+        camId:     info.camId,
+        camName:   info.camName,
+        groupName: info.groupName,
+        eventName: info.eventName,
+        address:   info.address,
+        myLat:     myLat,
+        myLng:     myLng,
+        targetLat: info.lat,
+        targetLng: info.lng,
+        distance:  distance,
+        result:    isOk ? 'OK' : 'NG',
+        timestamp: new Date().toISOString()
+      };
+
+      fetch(N8N_WEBHOOK_URL, {
         method: 'POST',
-        mode: 'no-cors',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: formData.toString()
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
       }).catch(function() {
         // 送信失敗しても画面表示には影響させない
       });
